@@ -34,6 +34,7 @@ pub(crate) struct ChainOptions<'a, 'p, V> {
     pub(crate) trust_anchors: &'p [TrustAnchor<'p>],
     pub(crate) intermediate_certs: &'p [CertificateDer<'p>],
     pub(crate) revocation: Option<RevocationOptions<'a>>,
+    pub(crate) distrusted_spkis: &'a [&'a [u8]],
 }
 
 impl<'a, 'p: 'a, V: ExtendedKeyUsageValidator> ChainOptions<'a, 'p, V> {
@@ -58,6 +59,13 @@ impl<'a, 'p: 'a, V: ExtendedKeyUsageValidator> ChainOptions<'a, 'p, V> {
         sub_ca_count: usize,
         budget: &mut Budget,
     ) -> Result<&'p TrustAnchor<'p>, ControlFlow<Error, Error>> {
+        if self
+            .distrusted_spkis
+            .contains(&path.head().spki.as_slice_less_safe())
+        {
+            return Err(Error::CertDistrusted.into());
+        }
+
         let role = path.node().role();
 
         check_issuer_independent_properties(path.head(), time, role, sub_ca_count, &self.eku)?;
@@ -71,7 +79,12 @@ impl<'a, 'p: 'a, V: ExtendedKeyUsageValidator> ChainOptions<'a, 'p, V> {
                     return Err(Error::UnknownIssuer.into());
                 }
 
-                // TODO: check_distrust(trust_anchor_subject, trust_anchor_spki)?;
+                if self
+                    .distrusted_spkis
+                    .contains(&trust_anchor.subject_public_key_info.as_ref())
+                {
+                    return Err(Error::CertDistrusted.into());
+                }
 
                 let node = path.node();
                 self.check_signed_chain(&node, time, trust_anchor, budget)?;
@@ -899,6 +912,18 @@ pub(crate) enum Role {
     Issuer,
     EndEntity,
 }
+
+// SPKI SEQUENCE contents (without tag/length) that should invalidate any path containing them.
+pub(crate) const DISTRUSTED_SPKIS: &[&[u8]] = &[
+    include_bytes!("data/distrusted/EMDVTLSCAG3B.spki.der"),
+    include_bytes!("data/distrusted/EMDVTLSCAG3C.spki.der"),
+    include_bytes!("data/distrusted/EMEVTLSCAG3B.spki.der"),
+    include_bytes!("data/distrusted/EMEVTLSCAG3C.spki.der"),
+    include_bytes!("data/distrusted/EMOVTLSCAG3B.spki.der"),
+    include_bytes!("data/distrusted/EMOVTLSCAG3C.spki.der"),
+    include_bytes!("data/distrusted/EMOVCSCAG3B.spki.der"),
+    include_bytes!("data/distrusted/EMOVCSCAG3C.spki.der"),
+];
 
 #[cfg(all(test, feature = "alloc", any(feature = "ring", feature = "aws-lc-rs")))]
 mod tests {
