@@ -1205,6 +1205,130 @@ mod tests {
         assert_eq!(path_intermediates[1].issuer(), trust_anchor_cert.subject());
     }
 
+    #[test]
+    fn distrusted_spki() {
+        fn verify(
+            ee_cert: &EndEntityCert<'_>,
+            intermediates: &[CertificateDer<'_>],
+            trust_anchors: &[TrustAnchor<'_>],
+            distrusted_spkis: &[&[u8]],
+        ) -> Result<usize, Error> {
+            use core::time::Duration;
+
+            ChainOptions {
+                eku: KeyUsage::server_auth(),
+                supported_sig_algs: crate::ALL_VERIFICATION_ALGS,
+                trust_anchors,
+                intermediate_certs: intermediates,
+                revocation: None,
+                distrusted_spkis,
+            }
+            .build_chain(
+                ee_cert,
+                UnixTime::since_unix_epoch(Duration::from_secs(0x1fed_f00d)),
+                None,
+            )
+            .map(|path| path.intermediate_certificates().count())
+        }
+
+        let root = make_issuer("Root");
+        let trust_anchors = &[anchor_from_trusted_cert(root.der()).unwrap()];
+        let issuing_intermediate = make_intermediate("Issuing Intermediate", &root);
+        let unrelated = make_intermediate("Intermediate", &root);
+
+        let params = issuer_params("Intermediate");
+        let key = KeyPair::generate_for(test_utils::RCGEN_SIGNATURE_ALG).unwrap();
+        // Issue the same SPKI under two different issuers to test cross-signing.
+        let intermediate = params.signed_by(&key, &issuing_intermediate).unwrap();
+        let cross_signed = params.signed_by(&key, &root).unwrap();
+        let ee = make_end_entity(&Issuer::new(params, key));
+        let ee_cert = EndEntityCert::try_from(ee.cert.der()).unwrap();
+        let intermediates = &[
+            unrelated.der().clone(),
+            intermediate.der().clone(),
+            issuing_intermediate.der().clone(),
+        ];
+        assert_eq!(
+            verify(&ee_cert, intermediates, trust_anchors, DISTRUSTED_SPKIS),
+            Ok(2)
+        );
+
+        // Distrusting any certificate in the path, including the root or leaf, rejects the chain.
+        for cert in [
+            root.der(),
+            issuing_intermediate.der(),
+            intermediate.der(),
+            ee.cert.der(),
+        ] {
+            assert_eq!(
+                verify(
+                    &ee_cert,
+                    intermediates,
+                    trust_anchors,
+                    &[anchor_from_trusted_cert(cert)
+                        .unwrap()
+                        .subject_public_key_info
+                        .as_ref()]
+                ),
+                Err(Error::CertDistrusted)
+            );
+        }
+
+        // Distrusting an unused intermediate leaves the valid path usable.
+        assert_eq!(
+            verify(
+                &ee_cert,
+                intermediates,
+                trust_anchors,
+                &[anchor_from_trusted_cert(unrelated.der())
+                    .unwrap()
+                    .subject_public_key_info
+                    .as_ref()]
+            ),
+            Ok(2)
+        );
+
+        // A different cross-sign provides a valid path around the distrusted issuer.
+        let intermediates = &[
+            intermediate.der().clone(),
+            issuing_intermediate.der().clone(),
+            cross_signed.der().clone(),
+        ];
+        let issuer_spki = anchor_from_trusted_cert(issuing_intermediate.der()).unwrap();
+        assert_eq!(
+            verify(
+                &ee_cert,
+                intermediates,
+                trust_anchors,
+                &[issuer_spki.subject_public_key_info.as_ref()]
+            ),
+            Ok(1)
+        );
+
+        // Distrusting the shared SPKI rejects the original certificate and its cross-sign.
+        let intermediate_spki = anchor_from_trusted_cert(intermediate.der()).unwrap();
+        assert_eq!(
+            verify(
+                &ee_cert,
+                intermediates,
+                trust_anchors,
+                &[intermediate_spki.subject_public_key_info.as_ref()]
+            ),
+            Err(Error::CertDistrusted)
+        );
+
+        // Reject a distrusted intermediate before searching for its issuer.
+        assert_eq!(
+            verify(
+                &ee_cert,
+                &[intermediate.der().clone()],
+                &[],
+                &[intermediate_spki.subject_public_key_info.as_ref()]
+            ),
+            Err(Error::CertDistrusted)
+        );
+    }
+
     fn make_intermediate(
         org_name: impl Into<String>,
         issuer: &Issuer<'_, impl SigningKey>,
@@ -1357,6 +1481,7 @@ mod tests {
             trust_anchors,
             intermediate_certs,
             revocation: None,
+            distrusted_spkis: DISTRUSTED_SPKIS,
         };
 
         match opts.build_chain_inner(
