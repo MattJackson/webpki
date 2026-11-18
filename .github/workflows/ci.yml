@@ -237,7 +237,7 @@ jobs:
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-10-18
+          toolchain: nightly-2026-03-20
           # ^ sync with https://github.com/awslabs/cargo-check-external-types/blob/main/rust-toolchain.toml
       - name: Install cargo-check-external-types
         uses: taiki-e/cache-cargo-install-action@v3
@@ -294,10 +294,10 @@ jobs:
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: "$NOSTD_TARGET"
+          targets: ${{ env.NOSTD_TARGET }}
 
       - name: check no-std mode
-        run: cargo check --locked --target $NOSTD_TARGET ${{ matrix.features  }}
+        run: cargo check --locked --target "$NOSTD_TARGET" ${{ matrix.features  }}
 
   feature-powerset:
     name: Feature Powerset

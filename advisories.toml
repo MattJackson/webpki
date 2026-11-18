@@ -1,0 +1,22 @@
+# RustSec advisories against upstream rustls-webpki 0.103.13 that this fork fixes by backporting the
+# upstream fix. Busbar's FIPS line is held at rustls-webpki 0.103.13 because every patched release
+# requires aws-lc-rs >= 1.18, which binds AWS-LC-FIPS 4 (not the validated AWS-LC-FIPS-3.1.0). The
+# version stays 0.103.13 so `=0.103.13` requirements resolve to this fork through [patch.crates-io].
+#
+# Each entry: `upstream` is the upstream commit whose source change is backported; `fix` is the fork
+# commit that carries it; `proof` is the regression test (path::name), committed before the fix and
+# red on 0.103.13 in this fork's CI. Consumers accept an advisory only by an entry here at their pin.
+# One-line arrays only: consumers read this file line by line.
+schema = "busbar.fork.advisories.v1"
+crate = "rustls-webpki"
+version = "0.103.13"
+
+# CVE-2026-111943: paths through distrusted emSign intermediates (keys now public) are accepted.
+[[advisory]]
+id = "RUSTSEC-2026-0382"
+aliases = ["CVE-2026-111943"]
+status = "fixed-in-fork"
+remedy = "upstream-fix-backported"
+upstream = "bb7dcc8d508711a99100ca692914e4fb25cc3995"
+fix = "edaad3b3"
+proof = ["src/verify_cert.rs::distrusted_spki"]
